@@ -4,4 +4,4 @@ __pycache__/
 notes.csv
 *.xlsx
 .venv/
-.data
+data/
