@@ -18,8 +18,10 @@ df = pd.read_excel(r'C:\Users\user\PycharmProjects\telegram_excel_sorter\data\Р
 NOTES_FILE = 'notes.csv'
 
 # Убедимся, что файл для заметок существует
+import os
+
 if not os.path.exists(NOTES_FILE):
-    pd.DataFrame(columns=["User", "Keywords", "UniqueID", "Magazin", "Note"]).to_csv(NOTES_FILE, index=False)
+    pd.DataFrame(columns=["User", "Magazin", "Note"]).to_csv(NOTES_FILE, index=False)
 
 # Состояния для ConversationHandler
 SEARCH, CHOOSE_RESULT, NOTE, DELETE_NOTE = range(4)
@@ -36,21 +38,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Команда /view_notes
 async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    notes_df = pd.read_csv(NOTES_FILE)
-    if notes_df.empty:
-        await update.message.reply_text("📋 У вас пока нет заметок.")
-        return
+    try:
+        notes_df = pd.read_csv(NOTES_FILE)
 
-    response_text = "📋 Ваши заметки:\n"
-    for idx, note_row in notes_df.iterrows():
-        response_text += (
-            f"{idx + 1}. Пользователь: {note_row['User']}\n"
-            f"Магазин: {note_row['Magazin']}\n"
-            f"Заметка: {note_row['Note']}\n\n"
-        )
+        if notes_df.empty or "Note" not in notes_df.columns:
+            await update.message.reply_text("📋 У вас пока нет заметок.")
+        else:
+            response_text = "📋 Все заметки:\n"
+            for idx, note_row in notes_df.iterrows():
+                response_text += (
+                    f"{idx + 1}. Пользователь: {note_row.get('User', '-')}\n"
+                    f"Магазин: {note_row.get('Magazin', '-')}\n"
+                    f"Заметка: {note_row.get('Note', '-')}\n\n"
+                )
 
-    await update.message.reply_text(response_text)
+            await update.message.reply_text(response_text[:4096])
 
+        # После вывода заметок — кнопка "Начать поиск"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Начать поиск", callback_data="start")]
+        ])
+        await update.message.reply_text("Готовы продолжить?", reply_markup=keyboard)
+
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка при загрузке заметок: {e}")
 
 # Форматирование результата поиска
 def format_search_result(index, result, related_notes):
@@ -91,7 +102,7 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Сохраняем результаты поиска в контекст пользователя
         context.user_data['search_results'] = result.head(10).to_dict(orient="records")
 
-        keyboard = []  # Кнопки для выбора результатов
+        keyboard = [["Начать новый поиск"]]  # Перемещаем кнопку "Начать новый поиск" на начало
 
         for idx, row in enumerate(context.user_data['search_results']):
             # Получаем заметки для текущего результата по уникальному идентификатору
@@ -104,9 +115,6 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Добавляем кнопку для выбора результата
             keyboard.append([str(idx + 1)])  # Кнопка для выбора результата
-
-        # Добавляем кнопку "Начать новый поиск"
-        keyboard.append(["Начать новый поиск"])
 
         # Кнопки для выбора результатов
         reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -234,14 +242,6 @@ async def handle_note_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SEARCH
 
 
-# Универсальный обработчик для неактивного бота
-async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Бот неактивен. Нажмите кнопку ниже, чтобы начать заново.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Start", callback_data="start")]])
-    )
-
-
 # Обработка нажатия кнопки "Start"
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -250,6 +250,30 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Привет! Я бот для поиска по таблице 📊\nВведите слово для поиска или используйте команду /view_notes для просмотра заметок."
     )
     return SEARCH
+
+
+# Универсальный обработчик для неактивного состояния или неожиданных сообщений
+async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверка, если сообщение - команда "/start" или "/view_notes"
+    if update.message and (update.message.text.startswith('/start') or update.message.text.startswith('/view_notes')):
+        # Эти команды уже обрабатываются в других обработчиках, ничего не выводим.
+        return
+
+    if update.message:
+        await update.message.reply_text(
+            "🤖 Я не понял это сообщение. Нажмите кнопку ниже, чтобы начать заново.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Начать заново", callback_data="start")]
+            ])
+        )
+    elif update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            "🤖 Что-то пошло не так. Нажмите кнопку ниже, чтобы начать заново.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Начать заново", callback_data="start")]
+            ])
+        )
 
 
 # Основная функция
@@ -276,7 +300,7 @@ def main():
     )
 
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("view_notes", view_notes))  # Новый обработчик
+    app.add_handler(CommandHandler("view_notes", view_notes))  # Обработчик команды /view_notes
     app.add_handler(CallbackQueryHandler(start_over, pattern="^start$"))
 
     print("Бот запущен ✅")
