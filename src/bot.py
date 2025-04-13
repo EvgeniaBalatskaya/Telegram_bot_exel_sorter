@@ -60,19 +60,14 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(text)
 
                 # Кнопки под каждым блоком
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("➕ Добавить", callback_data=f"add_{unique_id}"),
-                        InlineKeyboardButton("🗑️ Удалить", callback_data=f"del_{unique_id}")
-                    ]
-                ])
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("➕ Добавить", callback_data=f"add_{unique_id}"),
+                    InlineKeyboardButton("🗑️ Удалить", callback_data=f"del_{unique_id}")
+                ]])
                 await update.message.reply_text("Выберите действие:", reply_markup=keyboard)
 
-        # Кнопка в конце
-        final_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 Начать поиск", callback_data="start")]
-        ])
-        await update.message.reply_text("Готовы продолжить?", reply_markup=final_keyboard)
+        # Заменяем кнопку на текстовое сообщение
+        await update.message.reply_text("Для начала поиска по таблице нажмите /start")
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка при загрузке заметок: {e}")
