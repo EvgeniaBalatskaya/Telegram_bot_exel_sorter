@@ -46,7 +46,10 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for unique_id, group in grouped:
                 magazin_name = group['Magazin'].iloc[0] if 'Magazin' in group.columns else "Неизвестно"
 
-                text = f"🏪 Магазин: {magazin_name} (Код: {unique_id})\n\n"
+                # Преобразуем Код в строку и убираем точку, если есть
+                unique_id_str = str(unique_id).split('.')[0]
+
+                text = f"🏪 Магазин: {magazin_name} (Код: {unique_id_str})\n\n"
                 for idx, row in group.iterrows():
                     note_text = row.get('Note', '-')
                     user = row.get('User', '-')
@@ -55,7 +58,7 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Ограничим размер одного сообщения
                 if len(text) > 4096:
                     for i in range(0, len(text), 4090):
-                        await update.message.reply_text(text[i:i+4090])
+                        await update.message.reply_text(text[i:i + 4090])
                 else:
                     await update.message.reply_text(text)
 
@@ -63,11 +66,12 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton("➕ Добавить", callback_data=f"add_{unique_id}"),
                     InlineKeyboardButton("🗑️ Удалить", callback_data=f"del_{unique_id}")
-                ]])
+                ]
+                ])
                 await update.message.reply_text("Выберите действие:", reply_markup=keyboard)
 
-        # Заменяем кнопку на текстовое сообщение
-        await update.message.reply_text("Для начала поиска по таблице нажмите /start")
+        # Сообщение в конце
+        await update.message.reply_text("Для начала поиска нажмите /start")
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка при загрузке заметок: {e}")
@@ -77,7 +81,7 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def format_search_result(index, result, related_notes):
     result_text = (
         f"🔍 Результат поиска: {index + 1}\n\n"
-        f"Код: {result.get('Код', 'Нет данных')}\n"
+        f"Код: {str(result.get('Код', 'Нет данных')).split('.')[0]}\n"
         f"Магазин: {result.get('Магазин', 'Нет данных')}\n"
         f"Тип: {result.get('Тип', 'Нет данных')}\n"
         f"ФИО системотехника: {result.get('ФИО системотехника', 'Нет данных')}\n"
