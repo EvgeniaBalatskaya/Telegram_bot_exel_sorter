@@ -211,7 +211,10 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 notes_df = notes_df[~((notes_df['UniqueID'] == selected_note['UniqueID']) &
                                       (notes_df['Note'] == selected_note['Note']))]
                 notes_df.to_csv(NOTES_FILE, index=False)
-                await update.message.reply_text("🗑️ Заметка удалена! Возвращаемся к поиску.\nДля просмотра всех заметок нажмите /view_notes.")
+
+                # Изменённый вывод сообщений после удаления заметки
+                await update.message.reply_text("🗑️ Заметка удалена.")
+                await update.message.reply_text("📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.")
                 return SEARCH
             else:
                 raise ValueError("Неверный индекс")
@@ -229,7 +232,8 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notes_df = notes_df[notes_df['UniqueID'] != unique_id]
         notes_df.to_csv(NOTES_FILE, index=False)
 
-        await update.message.reply_text("🗑️ Все заметки удалены для этого магазина. Возвращаемся к поиску.\nДля просмотра всех заметок нажмите /view_notes.")
+        await update.message.reply_text("🗑️ Все заметки удалены.")
+        await update.message.reply_text("📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.")
         return SEARCH
 
     if selected_text == "Вернуться назад":
@@ -268,8 +272,10 @@ async def handle_note_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     notes_df = pd.concat([notes_df, new_note], ignore_index=True)
     notes_df.to_csv(NOTES_FILE, index=False)
 
-    await update.message.reply_text("📝 Заметка добавлена! Возвращаемся к поиску.\nДля просмотра всех заметок нажмите /view_notes.")
-    await update.message.reply_text("Введите слово для поиска в таблице:", reply_markup=ReplyKeyboardRemove())
+    # Измененный вывод сообщений после добавления заметки
+    await update.message.reply_text("📝 Заметка добавлена!")
+    await update.message.reply_text("📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.",
+                                     reply_markup=ReplyKeyboardRemove())
     return SEARCH
 
 
