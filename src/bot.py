@@ -7,9 +7,16 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters, CallbackQueryHandler
 )
 import pandas as pd
+import logging
+
+# Устанавливаем уровень логирования
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+application = Application.builder().token(TOKEN).build()
 
 # Загружаем Excel-файл при запуске
 df = pd.read_excel(r'C:\Users\user\PycharmProjects\telegram_excel_sorter\data\Распределение.xlsx')
@@ -19,7 +26,7 @@ NOTES_FILE = 'notes.csv'
 
 # Убедимся, что файл для заметок существует
 if not os.path.exists(NOTES_FILE):
-    pd.DataFrame(columns=["User", "Magazin", "Note"]).to_csv(NOTES_FILE, index=False)
+    pd.DataFrame(columns=["User", "Keywords", "UniqueID", "Magazin", "Note"]).to_csv(NOTES_FILE, index=False)
 
 # Состояния для ConversationHandler
 SEARCH, CHOOSE_RESULT, NOTE, DELETE_NOTE = range(4)
@@ -36,7 +43,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Команда /view_notes
 async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        if not os.path.exists(NOTES_FILE):
+            logger.error(f"Файл {NOTES_FILE} не найден!")
+            await update.message.reply_text(f"❌ Ошибка: файл заметок не найден.")
+            return
+
         notes_df = pd.read_csv(NOTES_FILE)
+        logger.debug(f"Загружены заметки: {notes_df.head()}")
 
         if notes_df.empty or "Note" not in notes_df.columns:
             await update.message.reply_text("📋 У вас пока нет заметок.")
@@ -44,10 +57,11 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grouped = notes_df.groupby('UniqueID')
 
             for unique_id, group in grouped:
-                magazin_name = group['Magazin'].iloc[0] if 'Magazin' in group.columns else "Неизвестно"
-
-                # Преобразуем Код в строку и убираем точку, если есть
                 unique_id_str = str(unique_id).split('.')[0]
+
+                # Находим имя магазина по коду в основном df
+                store_name = df[df['Код'].astype(str).str.split('.').str[0] == unique_id_str]['Магазин'].values
+                magazin_name = store_name[0] if len(store_name) > 0 else "Неизвестно"
 
                 text = f"🏪 Магазин: {magazin_name} (Код: {unique_id_str})\n\n"
                 for idx, row in group.iterrows():
@@ -55,26 +69,92 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user = row.get('User', '-')
                     text += f"📝 {note_text} (от {user})\n"
 
-                # Ограничим размер одного сообщения
                 if len(text) > 4096:
                     for i in range(0, len(text), 4090):
                         await update.message.reply_text(text[i:i + 4090])
                 else:
                     await update.message.reply_text(text)
 
-                # Кнопки под каждым блоком
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton("➕ Добавить", callback_data=f"add_{unique_id}"),
                     InlineKeyboardButton("🗑️ Удалить", callback_data=f"del_{unique_id}")
-                ]
-                ])
+                ]])
                 await update.message.reply_text("Выберите действие:", reply_markup=keyboard)
 
-        # Сообщение в конце
         await update.message.reply_text("Для начала поиска нажмите /start")
 
     except Exception as e:
+        logger.error(f"Ошибка при загрузке заметок: {e}")
         await update.message.reply_text(f"⚠️ Ошибка при загрузке заметок: {e}")
+
+
+# Обработчик кнопки "Добавить"
+async def add_note_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Извлекаем unique_id из callback_data
+    callback_data = update.callback_query.data
+    unique_id = callback_data.split('_')[1]
+
+    # Отправляем запрос на добавление заметки
+    await update.callback_query.answer()  # Откликаемся на кнопку
+    await update.callback_query.message.reply_text(
+        "Введите текст для новой заметки:",
+        reply_markup=ReplyKeyboardRemove()  # Убираем клавиатуру
+    )
+
+    # Сохраняем unique_id в context.user_data для использования в следующем шаге
+    context.user_data['add_note_unique_id'] = unique_id
+    return NOTE  # Переход к следующему шагу (НЕ ADD_NOTE)
+
+
+# Шаг для добавления заметки
+async def add_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    note_text = update.message.text.strip()
+    unique_id = context.user_data.get('add_note_unique_id')
+
+    logger.debug(f"Получен уникальный код: {unique_id}, текст заметки: {note_text}")
+
+    if unique_id and note_text:
+        try:
+            # Проверка на наличие файла и его загрузку
+            if not os.path.exists(NOTES_FILE):
+                logger.error(f"Файл {NOTES_FILE} не существует!")
+                await update.message.reply_text(f"❌ Ошибка: файл заметок не найден.")
+                return
+
+            notes_df = pd.read_csv(NOTES_FILE)
+            logger.debug(f"Загружены заметки: {notes_df.head()}")
+
+            # Создаем новую строку с заметкой
+            new_note = {
+                'UniqueID': unique_id,
+                'Note': note_text,
+                'User': update.message.from_user.first_name  # или .full_name если хочешь полное имя
+            }
+            new_note_df = pd.DataFrame([new_note])  # Преобразуем в DataFrame
+
+            # Добавляем новую строку в основной DataFrame
+            notes_df = pd.concat([notes_df, new_note_df], ignore_index=True)
+            notes_df.to_csv(NOTES_FILE, index=False)  # Сохраняем в файл
+            logger.debug(f"Заметка добавлена: {new_note}")
+
+            # Ответ пользователю
+            await update.message.reply_text("📝 Заметка добавлена!")
+            await update.message.reply_text(
+                "📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.",
+                reply_markup=ReplyKeyboardRemove()  # Убираем клавиатуру после добавления
+            )
+
+            # Переходим в состояние поиска
+            return SEARCH  # Переход к состоянию поиска
+
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении заметки: {e}")
+            await update.message.reply_text(f"❌ Ошибка при добавлении заметки: {e}")
+    else:
+        logger.warning("Ошибка: уникальный код или текст заметки отсутствует.")
+        await update.message.reply_text("❌ Ошибка: заметка не добавлена.")
+
+    return ConversationHandler.END  # Завершаем разговор
 
 
 # Форматирование результата поиска
@@ -160,11 +240,13 @@ async def choose_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(result_text)
 
         if related_notes.empty:
+            context.user_data['add_note_unique_id'] = unique_id
             await update.message.reply_text(
                 "Введите текст заметки:",
                 reply_markup=ReplyKeyboardRemove()
             )
             return NOTE
+
         else:
             keyboard = [["Добавить заметку"]]
             if len(related_notes) > 1:
@@ -275,7 +357,7 @@ async def handle_note_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📝 Заметка добавлена!")
     await update.message.reply_text("📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.",
                                      reply_markup=ReplyKeyboardRemove())
-    return SEARCH
+    return SEARCH  # Переход к следующему шагу (поиск)
 
 
 # Обработка нажатия кнопки "Start"
@@ -321,6 +403,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search),
                 CommandHandler("start", start),
                 CommandHandler("view_notes", view_notes),
+                CallbackQueryHandler(add_note_callback, pattern="^add_"),
             ],
             CHOOSE_RESULT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, choose_result),
@@ -328,7 +411,7 @@ def main():
                 CommandHandler("view_notes", view_notes),
             ],
             NOTE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_note_save),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_note_text),
                 CommandHandler("start", start),
                 CommandHandler("view_notes", view_notes),
             ],
@@ -344,6 +427,8 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("view_notes", view_notes))
     app.add_handler(CallbackQueryHandler(start_over, pattern="^start$"))
+    app.add_handler(CallbackQueryHandler(add_note_callback, pattern='^add_'))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_note_text))
 
     print("Бот запущен ✅")
     app.run_polling()
