@@ -152,7 +152,7 @@ async def add_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Ошибка при добавлении заметки: {e}")
     else:
         logger.warning("Ошибка: уникальный код или текст заметки отсутствует.")
-        await update.message.reply_text("❌ Ошибка: заметка не добавлена.")
+        await update.message.reply_text("❌ Сессия завершена. Нажмите /start для начала поиска")
 
     return ConversationHandler.END  # Завершаем разговор
 
@@ -160,15 +160,16 @@ async def add_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Форматирование результата поиска
 def format_search_result(index, result, related_notes):
     result_text = (
-        f"🔍 Результат поиска: {index + 1}\n\n"
-        f"Код: {str(result.get('Код', 'Нет данных')).split('.')[0]}\n"
-        f"Магазин: {result.get('Магазин', 'Нет данных')}\n"
-        f"Тип: {result.get('Тип', 'Нет данных')}\n"
-        f"ФИО системотехника: {result.get('ФИО системотехника', 'Нет данных')}\n"
-        f"Адрес: {result.get('Адрес', 'Нет данных')}\n"
-        f"Полный адрес: {result.get('Полный адрес', 'Нет данных')}\n\n"
+        f"🔍 <b>Результат поиска: {index + 1}</b>\n\n"
+        f"<b>Код:</b> {str(result.get('Код', 'Нет данных')).split('.')[0]}\n"
+        f"<b>Магазин: </b> {result.get('Магазин', 'Нет данных')}\n"
+        f"<b>Тип: </b> {result.get('Тип', 'Нет данных')}\n"
+        f"<b>ФИО системотехника: </b> {result.get('ФИО системотехника', 'Нет данных')}\n"
+        f"<b>Адрес: </b><code>{result.get('Адрес', 'Нет данных')}</code>\n"
+        f"<b>Полный адрес:</b>{result.get('Полный адрес', 'Нет данных')}\n\n"
     )
-    result_text += "📌 Заметки:\n"
+
+    result_text += "📌 <b>Заметки:</b>\n"
     if related_notes.empty:
         result_text += "-\n"
     else:
@@ -197,7 +198,7 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row_notes = notes_df[notes_df['UniqueID'] == unique_id]
             result_text = format_search_result(idx, row, row_notes)
 
-            await update.message.reply_text(result_text)
+            await update.message.reply_text(result_text, parse_mode="HTML")
             keyboard.append([str(idx + 1)])
 
         reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -235,9 +236,8 @@ async def choose_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notes_df = pd.read_csv(NOTES_FILE)
         related_notes = notes_df[notes_df['UniqueID'] == unique_id]
 
-        # Повторно показать выбранный результат
         result_text = format_search_result(selected_index, search_results[selected_index], related_notes)
-        await update.message.reply_text(result_text)
+        await update.message.reply_text(result_text, parse_mode="HTML")
 
         if related_notes.empty:
             context.user_data['add_note_unique_id'] = unique_id
@@ -246,7 +246,6 @@ async def choose_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ReplyKeyboardRemove()
             )
             return NOTE
-
         else:
             keyboard = [["Добавить заметку"]]
             if len(related_notes) > 1:
