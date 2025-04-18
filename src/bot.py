@@ -10,12 +10,14 @@ import pandas as pd
 import logging
 
 # Устанавливаем уровень логирования
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Загружаем переменные окружения из .env
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# Создаем приложение бота
 application = Application.builder().token(TOKEN).build()
 
 # Загружаем Excel-файл при запуске
@@ -24,26 +26,43 @@ df = pd.read_excel(r'C:\Users\user\PycharmProjects\telegram_excel_sorter\data\Р
 # Путь для сохранения заметок
 NOTES_FILE = 'notes.csv'
 
-# Убедимся, что файл для заметок существует
+# Проверяем, существует ли файл для заметок, если нет, создаем его
 if not os.path.exists(NOTES_FILE):
-    pd.DataFrame(columns=["User", "Keywords", "UniqueID", "Magazin", "Note"]).to_csv(NOTES_FILE, index=False)
+    with open(NOTES_FILE, 'w') as f:
+        f.write('store_code,note\n')  # Заголовки колонок
+
+logger.info("Бот успешно инициализирован.")
+
 
 # Состояния для ConversationHandler
 SEARCH, CHOOSE_RESULT, NOTE, DELETE_NOTE = range(4)
 
 
-# Команда /start
+# Простой обработчик, который не завершает сессию
+async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Получено сообщение: {update.message.text if update.message else 'Нет сообщения'}")
+
+    # Ответим на любое сообщение, но не завершаем сессию
+    await update.message.reply_text(
+        "Это сообщение не было распознано в текущем процессе. Пожалуйста, продолжите поиск или используйте /view_notes."
+    )
+    return None  # Не перезапускаем сессию, просто остаемся в текущем состоянии
+
+
+# Основной обработчик для /start
 async def start_combined(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Запуск нового процесса /start или переход к поиску.")
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
             "📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок."
         )
+        return SEARCH  # Переход к состоянию поиска
     elif update.message:
         await update.message.reply_text(
             "📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок."
         )
-    return SEARCH
+        return SEARCH  # Переход к состоянию поиска
 
 
 # Форматирование результата поиска
@@ -165,42 +184,37 @@ async def choose_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     note_text = update.message.text.strip()
     unique_id = context.user_data.get('add_note_unique_id')
+    selected_result = context.user_data.get('selected_result', {})
+    magazin = selected_result.get('Магазин', 'Не указан')
+    user = update.effective_user.first_name
 
     logger.debug(f"Получен уникальный код: {unique_id}, текст заметки: {note_text}")
 
     if unique_id and note_text:
         try:
-            # Проверка на наличие файла и его загрузку
             if not os.path.exists(NOTES_FILE):
                 logger.error(f"Файл {NOTES_FILE} не существует!")
-                await update.message.reply_text(f"❌ Ошибка: файл заметок не найден.")
+                await update.message.reply_text("❌ Ошибка: файл заметок не найден.")
                 return
 
             notes_df = pd.read_csv(NOTES_FILE)
-            logger.debug(f"Загружены заметки: {notes_df.head()}")
 
-            # Создаем новую строку с заметкой
-            new_note = {
+            new_note = pd.DataFrame([{
                 'UniqueID': unique_id,
                 'Note': note_text,
-                'User': update.message.from_user.first_name  # или .full_name если хочешь полное имя
-            }
-            new_note_df = pd.DataFrame([new_note])  # Преобразуем в DataFrame
+                'User': user,
+                'Magazin': magazin
+            }])
 
-            # Добавляем новую строку в основной DataFrame
-            notes_df = pd.concat([notes_df, new_note_df], ignore_index=True)
-            notes_df.to_csv(NOTES_FILE, index=False)  # Сохраняем в файл
-            logger.debug(f"Заметка добавлена: {new_note}")
+            notes_df = pd.concat([notes_df, new_note], ignore_index=True)
+            notes_df.to_csv(NOTES_FILE, index=False)
 
-            # Ответ пользователю
             await update.message.reply_text("📝 Заметка добавлена!")
             await update.message.reply_text(
                 "📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.",
-                reply_markup=ReplyKeyboardRemove()  # Убираем клавиатуру после добавления
+                reply_markup=ReplyKeyboardRemove()
             )
-
-            # Переходим в состояние поиска
-            return SEARCH  # Переход к состоянию поиска
+            return SEARCH
 
         except Exception as e:
             logger.error(f"Ошибка при добавлении заметки: {e}")
@@ -209,30 +223,7 @@ async def add_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("Ошибка: уникальный код или текст заметки отсутствует.")
         await update.message.reply_text("❌ Сессия завершена. Нажмите /start для начала поиска")
 
-    return ConversationHandler.END  # Завершаем разговор
-
-
-# Сохранение заметки
-async def handle_note_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    note_text = update.message.text
-    user = update.effective_user.first_name
-    selected_result = context.user_data.get('selected_result', {})
-
-    unique_id = selected_result.get('Код', 'Нет данных')
-    magazin = selected_result.get('Магазин', 'Не указан')
-
-    notes_df = pd.read_csv(NOTES_FILE)
-
-    new_note = pd.DataFrame([[user, "", unique_id, magazin, note_text]],
-                            columns=["User", "Keywords", "UniqueID", "Magazin", "Note"])
-    notes_df = pd.concat([notes_df, new_note], ignore_index=True)
-    notes_df.to_csv(NOTES_FILE, index=False)
-
-    # Измененный вывод сообщений после добавления заметки
-    await update.message.reply_text("📝 Заметка добавлена!")
-    await update.message.reply_text("📊 Введите слово для поиска по таблице или используйте команду /view_notes для просмотра заметок.",
-                                     reply_markup=ReplyKeyboardRemove())
-    return SEARCH  # Переход к следующему шагу (поиск)
+    return ConversationHandler.END
 
 
 # Удаление заметки
@@ -351,54 +342,36 @@ async def view_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработчик кнопки "Добавить"
 async def add_note_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Извлекаем unique_id из callback_data
     callback_data = update.callback_query.data
     unique_id = callback_data.split('_')[1]
 
-    # Отправляем запрос на добавление заметки
-    await update.callback_query.answer()  # Откликаемся на кнопку
+    await update.callback_query.answer()
     await update.callback_query.message.reply_text(
         "Введите текст для новой заметки:",
-        reply_markup=ReplyKeyboardRemove()  # Убираем клавиатуру
+        reply_markup=ReplyKeyboardRemove()
     )
 
-    # Сохраняем unique_id в context.user_data для использования в следующем шаге
+    # Сохраняем unique_id и выбранный результат
     context.user_data['add_note_unique_id'] = unique_id
-    return NOTE  # Переход к следующему шагу (НЕ ADD_NOTE)
 
+    # Если selected_result уже есть — сохраним и его
+    if 'selected_result' not in context.user_data:
+        context.user_data['selected_result'] = {'Код': unique_id, 'Магазин': 'Не указан'}
 
-# Универсальный обработчик
-async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message and (update.message.text.startswith('/start') or update.message.text.startswith('/view_notes')):
-        return
-
-    if update.message:
-        await update.message.reply_text(
-            "🤖 Я не понял это сообщение. Нажмите кнопку ниже, чтобы начать заново.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔁 Начать заново", callback_data="start")]
-            ])
-        )
-    elif update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            "🤖 Что-то пошло не так. Нажмите кнопку ниже, чтобы начать заново.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔁 Начать заново", callback_data="start")]
-            ])
-        )
+    return NOTE
 
 
 # Основная функция
 def main():
     app = Application.builder().token(TOKEN).build()
 
+    # Добавляем конверсационный обработчик с логикой завершения сессии
     conv_handler = ConversationHandler(
-        entry_points=[
+        entry_points=[  # Точки входа в разговор
             CommandHandler("start", start_combined),
             CallbackQueryHandler(start_combined, pattern="^start$"),
         ],
-        states={
+        states={  # Состояния диалога
             SEARCH: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search),
                 CommandHandler("start", start_combined),
@@ -425,19 +398,20 @@ def main():
                 CallbackQueryHandler(start_combined, pattern="^start$"),
             ],
         },
-        fallbacks=[MessageHandler(filters.ALL, fallback_handler)],
+        fallbacks=[  # Обработчик fallback
+            MessageHandler(filters.ALL, fallback_handler),  # Ловим все остальные сообщения
+        ],
     )
 
+    # Добавляем обработчики
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("view_notes", view_notes))
-    app.add_handler(CommandHandler('start', start_combined))
-    app.add_handler(CallbackQueryHandler(start_combined, pattern='^start$'))
-    app.add_handler(CallbackQueryHandler(add_note_callback, pattern='^add_'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_note_text))
+    app.add_handler(CommandHandler("start", start_combined))
+    app.add_handler(CallbackQueryHandler(start_combined, pattern="^start$"))
+    app.add_handler(CallbackQueryHandler(add_note_callback, pattern="^add_"))
 
-    print("Бот запущен ✅")
+    logger.info("Бот запущен ✅")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
